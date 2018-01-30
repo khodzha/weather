@@ -15,7 +15,7 @@ use self::futures::future::{Either};
 use self::tokio_core::reactor::{Timeout, Handle};
 static TIMEOUT: u64 = 5;
 
-pub fn current(handle: &Handle, q: String) -> Box<Future<Item = Value, Error = hyper::Error>> {
+pub fn current(handle: &Handle, q: String) -> Box<Future<Item = f32, Error = hyper::Error>> {
     let api_key: &'static str = env!("OWM_KEY");
 
     let timeout = Timeout::new(Duration::from_secs(TIMEOUT), &handle).unwrap();
@@ -43,6 +43,15 @@ pub fn current(handle: &Handle, q: String) -> Box<Future<Item = Value, Error = h
         }
         Err(Either::A((get_error, _timeout))) => Err(get_error),
         Err(Either::B((timeout_error, _get))) => Err(From::from(timeout_error)),
+    }).and_then(|s| {
+        let json_temp: Value = s["main"]["temp"].clone();
+        let temp = serde_json::from_value::<f32>(json_temp).map_err(|e|
+            io::Error::new(
+                io::ErrorKind::Other,
+                e
+            )
+        )?;
+        Ok(temp)
     });
     Box::new(resp)
 }
@@ -58,10 +67,9 @@ mod tests {
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
         let work = current(&handle, String::from("ufa"));
-        let r = core.run(work).unwrap();
-        let code: i32 = serde_json::from_value(r["cod"].clone()).unwrap();
+        let r = core.run(work);
 
-        assert_eq!(code, 200);
+        assert!(r.is_ok());
     }
 
     #[test]
@@ -69,10 +77,8 @@ mod tests {
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
         let work = current(&handle, String::from("new-ork"));
-        let r = core.run(work).unwrap();
+        let r = core.run(work);
 
-        let code: String = serde_json::from_value(r["cod"].clone()).unwrap();
-
-        assert_eq!(code, "404");
+        assert!(r.is_err());
     }
 }

@@ -5,7 +5,6 @@ extern crate serde_json;
 
 pub mod owm;
 
-use serde_json::Value;
 use futures::{Future, Stream};
 use hyper::{Get, StatusCode};
 use hyper::error::Error;
@@ -35,9 +34,7 @@ impl Service for WeatherServer {
                         Box::new(futures::future::ok(resp))
                     }
                     Some(query) => {
-                        let body_box = owm::current(&self.handle, query.to_string()).map(|s| {
-                            let m: Value = s["main"]["temp"].clone();
-                            let temp: f32 = serde_json::from_value(m).unwrap();
+                        let body_box = owm::current(&self.handle, query.to_string()).map(|temp| {
                             let r = format!("response is: {}", temp);
                             Response::new()
                                     .with_header(ContentLength(r.len() as u64))
