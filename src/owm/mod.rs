@@ -13,11 +13,12 @@ use self::hyper::{Client};
 use self::futures::future::{Either};
 
 use self::tokio_core::reactor::{Timeout, Handle};
+static TIMEOUT: u64 = 5;
 
 pub fn current(handle: &Handle, q: String) -> Box<Future<Item = Value, Error = hyper::Error>> {
     let api_key: &'static str = env!("OWM_KEY");
 
-    let timeout = Timeout::new(Duration::from_secs(1), &handle).unwrap();
+    let timeout = Timeout::new(Duration::from_secs(TIMEOUT), &handle).unwrap();
     let client = Client::configure().build(&handle);
     let url = format!("http://api.openweathermap.org/data/2.5/weather?q={loc}&APPID={key}&units=metric", loc=q, key=api_key);
     let uri = url.parse().unwrap();
@@ -31,7 +32,6 @@ pub fn current(handle: &Handle, q: String) -> Box<Future<Item = Value, Error = h
                 e
             )
         })?;
-        println!("response: {}", v);
         Ok(v)
     }).select2(timeout).then(|res| match res {
         Ok(Either::A((got, _timeout))) => Ok(got),
@@ -45,4 +45,34 @@ pub fn current(handle: &Handle, q: String) -> Box<Future<Item = Value, Error = h
         Err(Either::B((timeout_error, _get))) => Err(From::from(timeout_error)),
     });
     Box::new(resp)
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_performs_request_to_api() {
+        let mut core = tokio_core::reactor::Core::new().unwrap();
+        let handle = core.handle();
+        let work = current(&handle, String::from("ufa"));
+        let r = core.run(work).unwrap();
+        let code: i32 = serde_json::from_value(r["cod"].clone()).unwrap();
+
+        assert_eq!(code, 200);
+    }
+
+    #[test]
+    fn it_handles_wrong_cities() {
+        let mut core = tokio_core::reactor::Core::new().unwrap();
+        let handle = core.handle();
+        let work = current(&handle, String::from("new-ork"));
+        let r = core.run(work).unwrap();
+
+        let code: String = serde_json::from_value(r["cod"].clone()).unwrap();
+
+        assert_eq!(code, "404");
+    }
 }
