@@ -15,12 +15,9 @@ use self::futures::future::{Either};
 use self::tokio_core::reactor::{Timeout, Handle};
 static TIMEOUT: u64 = 5;
 
-pub fn current(handle: &Handle, q: String) -> Box<Future<Item = f32, Error = hyper::Error>> {
-    let api_key: &'static str = env!("OWM_KEY");
-
+fn async_request(handle: &Handle, url: String) -> Box<Future<Item = Value, Error = hyper::Error>> {
     let timeout = Timeout::new(Duration::from_secs(TIMEOUT), &handle).unwrap();
     let client = Client::configure().build(&handle);
-    let url = format!("http://api.openweathermap.org/data/2.5/weather?q={loc}&APPID={key}&units=metric", loc=q, key=api_key);
     let uri = url.parse().unwrap();
 
     let resp = client.get(uri).and_then(|web_res| {
@@ -43,7 +40,16 @@ pub fn current(handle: &Handle, q: String) -> Box<Future<Item = f32, Error = hyp
         }
         Err(Either::A((get_error, _timeout))) => Err(get_error),
         Err(Either::B((timeout_error, _get))) => Err(From::from(timeout_error)),
-    }).and_then(|s| {
+    });
+
+    Box::new(resp)
+}
+
+pub fn current(handle: &Handle, q: String) -> Box<Future<Item = f32, Error = hyper::Error>> {
+    let api_key: &'static str = env!("OWM_KEY");
+    let url = format!("http://api.openweathermap.org/data/2.5/weather?q={loc}&APPID={key}&units=metric", loc=q, key=api_key);
+
+    let resp = async_request(handle, url).and_then(|s| {
         let json_temp: Value = s["main"]["temp"].clone();
         let temp = serde_json::from_value::<f32>(json_temp).map_err(|e|
             io::Error::new(
@@ -53,9 +59,9 @@ pub fn current(handle: &Handle, q: String) -> Box<Future<Item = f32, Error = hyp
         )?;
         Ok(temp)
     });
+
     Box::new(resp)
 }
-
 
 
 #[cfg(test)]
