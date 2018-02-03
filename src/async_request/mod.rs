@@ -43,3 +43,31 @@ pub fn async_request(handle: &Handle, url: String) -> Box<Future<Item = Value, E
 
     Box::new(resp)
 }
+
+#[cfg(test)]
+extern crate mockito;
+
+#[cfg(test)]
+const URL: &'static str = mockito::SERVER_URL;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use self::mockito::{mock};
+
+    #[test]
+    fn it_performs_request() {
+        let m = mock("GET", "/some-url")
+            .with_status(200)
+            .with_body(r#""string-json-response""#)
+            .create();
+
+        let mut core = tokio_core::reactor::Core::new().unwrap();
+        let handle = core.handle();
+        let work = async_request(&handle, format!("{}/some-url", URL));
+        let r = core.run(work);
+
+        assert_eq!(r.unwrap(), "string-json-response");
+        m.assert();
+    }
+}

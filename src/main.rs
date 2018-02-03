@@ -31,25 +31,34 @@ impl Service for WeatherServer {
         match (req.method(), req.path()) {
             (&Get, "/current") => {
                 match req.query() {
-                    None => {
-                        let mut resp = Response::new();
-                        resp.set_status(StatusCode::UnprocessableEntity);
-                        Box::new(futures::future::ok(resp))
-                    }
-                    Some(query) => {
+                    Some(query) if query.len() > 0 => {
                         let async_apixu = apixu::current(&self.handle, query.to_string());
                         let async_owm = owm::current(&self.handle, query.to_string());
                         let async_wb = weatherbit::current(&self.handle, query.to_string());
 
-                        let body = async_owm.join3(async_apixu, async_wb).map(|(owm_temp, apixu_temp, wb_temp)| {
-                            let r = format!("owm: {}°C\napixu: {}°C\nweatherbit: {}°C\n", owm_temp, apixu_temp, wb_temp);
+                        let resp = futures::future::join_all(vec![async_owm, async_apixu, async_wb]).map(|temps| {
+                            let values: Vec<f32> = temps.into_iter().filter_map(|v| v).collect();
+                            let sum: f32 = values.iter().sum::<f32>();
+                            let avg = sum / values.len() as f32;
+
+                            let body = format!("avg: {:?}°C\n", avg);
+
                             Response::new()
-                                    .with_header(ContentLength(r.len() as u64))
+                                    .with_header(ContentLength(body.len() as u64))
                                     .with_header(ContentType::plaintext())
-                                    .with_body(r)
+                                    .with_body(body)
                         });
 
-                        Box::new(body)
+                        Box::new(resp)
+                    }
+                    _ => {
+                        let body = "Provide location as query";
+                        let resp = Response::new()
+                                    .with_status(StatusCode::UnprocessableEntity)
+                                    .with_header(ContentLength(body.len() as u64))
+                                    .with_header(ContentType::plaintext())
+                                    .with_body(body);
+                        Box::new(futures::future::ok(resp))
                     }
                 }
             },
