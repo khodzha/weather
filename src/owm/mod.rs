@@ -10,7 +10,7 @@ use std::io;
 use self::futures::{Future};
 
 use self::tokio_core::reactor::{Handle};
-use async_request::async_request;
+use async_request::async_json_request;
 
 #[cfg(not(test))]
 const API_ROOT: &'static str = "http://api.openweathermap.org/data/2.5";
@@ -18,7 +18,7 @@ const API_ROOT: &'static str = "http://api.openweathermap.org/data/2.5";
 pub fn current(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Option<f32>, Error = hyper::Error>> {
     let url = format!("{api_root}/weather?q={loc}&APPID={key}&units=metric", loc=q, key=api_key, api_root=API_ROOT);
 
-    let resp = async_request(handle, url).and_then(|s| {
+    let resp = async_json_request(handle, &url).and_then(|s| {
         let json_temp: Value = s["main"]["temp"].clone();
         let temp = serde_json::from_value::<f32>(json_temp).map_err(|e|
             io::Error::new(

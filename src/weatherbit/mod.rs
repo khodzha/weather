@@ -11,7 +11,7 @@ use std::io;
 use self::futures::{Future};
 
 use self::tokio_core::reactor::{Handle};
-use async_request::async_request;
+use async_request::async_json_request;
 
 use self::itertools::EitherOrBoth::{Both};
 use self::itertools::Itertools;
@@ -22,7 +22,7 @@ const API_ROOT: &'static str = "http://api.weatherbit.io/v2.0";
 pub fn current(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Option<f32>, Error = hyper::Error>> {
     let url = format!("{api_root}/current?key={key}&city={loc}", loc=q, key=api_key, api_root=API_ROOT);
 
-    let resp = async_request(handle, url).and_then(|s| {
+    let resp = async_json_request(handle, &url).and_then(|s| {
         let json_temp: Value = s["data"][0]["temp"].clone();
         let temp = serde_json::from_value::<f32>(json_temp).map_err(|e|
             io::Error::new(
@@ -41,7 +41,7 @@ pub fn current(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Opt
 pub fn forecast(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Vec<Option<f32>>, Error = hyper::Error>> {
     let url = format!("{api_root}/forecast/daily?key={key}&city={loc}&days=5", loc=q, key=api_key, api_root=API_ROOT);
 
-    let resp = async_request(handle, url).and_then(|s| {
+    let resp = async_json_request(handle, &url).and_then(|s| {
         let fcast: Value = s["data"].clone();
         let json_temps: Vec<Value> = serde_json::from_value(fcast).map_err(|e|
             io::Error::new(
