@@ -30,6 +30,14 @@ impl WeatherServer {
                     .with_body(body);
         Box::new(futures::future::ok(resp))
     }
+
+    fn format_temps(vec: Vec<Option<f32>>) -> String {
+        let new_vec: Vec<String> = vec.into_iter().enumerate().map(|(idx, val)| match val {
+            Some(t) => format!("day{} temp = {:.1}°C", idx+1, t),
+            None => format!("day{} temp is unknown°C", idx+1)
+        }).collect();
+        new_vec.join("\n")
+    }
 }
 
 impl Service for WeatherServer {
@@ -61,7 +69,7 @@ impl Service for WeatherServer {
                     let avg = sum / values.len() as f32;
 
                     let body = if values.len() > 0 {
-                        format!("avg: {}°C\n", avg)
+                        format!("avg: {:.1}°C\n", avg)
                     } else {
                         format!("Failed to receive APIs responses")
                     };
@@ -91,7 +99,7 @@ impl Service for WeatherServer {
                         _ => None
                     }).collect();
 
-                    let r = format!("avg_temps: {:?}°C\n", avg_temps);
+                    let r = Self::format_temps(avg_temps);
                     Response::new()
                             .with_header(ContentLength(r.len() as u64))
                             .with_header(ContentType::plaintext())
