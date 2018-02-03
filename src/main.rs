@@ -3,16 +3,19 @@ extern crate hyper;
 extern crate tokio_core;
 extern crate serde_json;
 
-pub mod owm;
-
 use futures::{Future, Stream};
 use hyper::{Get, StatusCode};
 use hyper::error::Error;
 use tokio_core::reactor::Handle;
-use hyper::header::ContentLength;
+use hyper::header::{ContentLength, ContentType};
 use hyper::server::{Http, Service, Request, Response};
 
 pub type ResponseStream = Box<Stream<Item = String, Error=Error>>;
+
+mod async_request;
+mod owm;
+mod apixu;
+mod weatherbit;
 
 struct WeatherServer{
     handle: Handle
@@ -26,7 +29,7 @@ impl Service for WeatherServer {
 
     fn call(&self, req: Request) -> Self::Future {
         match (req.method(), req.path()) {
-            (&Get, "/") => {
+            (&Get, "/current") => {
                 match req.query() {
                     None => {
                         let mut resp = Response::new();
@@ -34,13 +37,42 @@ impl Service for WeatherServer {
                         Box::new(futures::future::ok(resp))
                     }
                     Some(query) => {
-                        let body_box = owm::current(&self.handle, query.to_string()).map(|temp| {
-                            let r = format!("response is: {}", temp);
+                        let async_apixu = apixu::current(&self.handle, query.to_string());
+                        let async_owm = owm::current(&self.handle, query.to_string());
+                        let async_wb = weatherbit::current(&self.handle, query.to_string());
+
+                        let body = async_owm.join3(async_apixu, async_wb).map(|(owm_temp, apixu_temp, wb_temp)| {
+                            let r = format!("owm: {}°C\napixu: {}°C\nweatherbit: {}°C\n", owm_temp, apixu_temp, wb_temp);
                             Response::new()
                                     .with_header(ContentLength(r.len() as u64))
+                                    .with_header(ContentType::plaintext())
                                     .with_body(r)
                         });
-                        Box::new(body_box)
+
+                        Box::new(body)
+                    }
+                }
+            },
+            (&Get, "/forecast") => {
+                match req.query() {
+                    None => {
+                        let mut resp = Response::new();
+                        resp.set_status(StatusCode::UnprocessableEntity);
+                        Box::new(futures::future::ok(resp))
+                    }
+                    Some(query) => {
+                        let async_apixu = apixu::forecast(&self.handle, query.to_string());
+                        let async_wb = weatherbit::forecast(&self.handle, query.to_string());
+
+                        let body = async_apixu.join(async_wb).map(|(apixu_temp, wb_temp)| {
+                            let r = format!("apixu: {:?}°C\nwb: {:?}°C\n", apixu_temp, wb_temp);
+                            Response::new()
+                                    .with_header(ContentLength(r.len() as u64))
+                                    .with_header(ContentType::plaintext())
+                                    .with_body(r)
+                        });
+
+                        Box::new(body)
                     }
                 }
             },
