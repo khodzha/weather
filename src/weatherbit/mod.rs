@@ -19,8 +19,7 @@ use self::itertools::Itertools;
 #[cfg(not(test))]
 const API_ROOT: &'static str = "http://api.weatherbit.io/v2.0";
 
-pub fn current(handle: &Handle, q: String) -> Box<Future<Item = Option<f32>, Error = hyper::Error>> {
-    let api_key: &'static str = env!("WEATHERBIT_KEY");
+pub fn current(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Option<f32>, Error = hyper::Error>> {
     let url = format!("{api_root}/current?key={key}&city={loc}", loc=q, key=api_key, api_root=API_ROOT);
 
     let resp = async_request(handle, url).and_then(|s| {
@@ -39,8 +38,7 @@ pub fn current(handle: &Handle, q: String) -> Box<Future<Item = Option<f32>, Err
     Box::new(resp)
 }
 
-pub fn forecast(handle: &Handle, q: String) -> Box<Future<Item = Vec<Option<f32>>, Error = hyper::Error>> {
-    let api_key: &'static str = env!("WEATHERBIT_KEY");
+pub fn forecast(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Vec<Option<f32>>, Error = hyper::Error>> {
     let url = format!("{api_root}/forecast/daily?key={key}&city={loc}&days=5", loc=q, key=api_key, api_root=API_ROOT);
 
     let resp = async_request(handle, url).and_then(|s| {
@@ -87,7 +85,7 @@ mod tests {
 
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
-        let work = current(&handle, String::from("Ufa"));
+        let work = current(&handle, "Ufa", "");
         let r = core.run(work);
 
         assert_eq!(r.unwrap(), Some(-7.0));
@@ -102,7 +100,7 @@ mod tests {
             .create();
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
-        let work = current(&handle, String::from("new-ork"));
+        let work = current(&handle, "new-ork", "");
         let r = core.run(work);
 
         assert_eq!(r.unwrap(), None);
@@ -119,7 +117,7 @@ mod tests {
 
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
-        let work = forecast(&handle, String::from("Ekaterinburg"));
+        let work = forecast(&handle, "Ekaterinburg", "");
         let r = core.run(work);
 
         assert_eq!(r.unwrap(), vec![Some(-9.0), Some(-11.0), Some(-9.0), Some(-6.0), Some(-7.0)]);
@@ -134,7 +132,7 @@ mod tests {
 
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
-        let work = forecast(&handle, String::from("new-ork"));
+        let work = forecast(&handle, "new-ork", "");
         let r = core.run(work);
 
         assert_eq!(r.unwrap(), vec![None; 5]);
@@ -151,7 +149,7 @@ mod tests {
 
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
-        let work = forecast(&handle, String::from("Ekaterinburg"));
+        let work = forecast(&handle, "Ekaterinburg", "");
         let r = core.run(work);
 
         assert_eq!(r.unwrap(), vec![Some(-9.0), Some(-11.0), Some(-9.0), None, None]);

@@ -15,8 +15,7 @@ use async_request::async_request;
 #[cfg(not(test))]
 const API_ROOT: &'static str = "http://api.openweathermap.org/data/2.5";
 
-pub fn current(handle: &Handle, q: String) -> Box<Future<Item = Option<f32>, Error = hyper::Error>> {
-    let api_key: &'static str = env!("OWM_KEY");
+pub fn current(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Option<f32>, Error = hyper::Error>> {
     let url = format!("{api_root}/weather?q={loc}&APPID={key}&units=metric", loc=q, key=api_key, api_root=API_ROOT);
 
     let resp = async_request(handle, url).and_then(|s| {
@@ -56,7 +55,7 @@ mod tests {
 
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
-        let work = current(&handle, String::from("Yakutsk"));
+        let work = current(&handle, "Yakutsk", "");
         let r = core.run(work);
 
         assert_eq!(r.unwrap(), Some(-41.0));
@@ -72,7 +71,7 @@ mod tests {
             .create();
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let handle = core.handle();
-        let work = current(&handle, String::from("new-rk"));
+        let work = current(&handle, "new-rk", "");
         let r = core.run(work);
 
         assert_eq!(r.unwrap(), None);

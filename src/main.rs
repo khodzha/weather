@@ -10,6 +10,8 @@ use tokio_core::reactor::Handle;
 use hyper::header::{ContentLength, ContentType};
 use hyper::server::{Http, Service, Request, Response};
 
+use std::env::var;
+
 pub type ResponseStream = Box<Stream<Item = String, Error=Error>>;
 
 mod async_request;
@@ -18,8 +20,12 @@ mod apixu;
 mod weatherbit;
 
 struct WeatherServer{
-    handle: Handle
+    handle: Handle,
+    owm_key: String,
+    apixu_key: String,
+    weatherbit_key: String
 }
+
 impl WeatherServer {
     fn empty_query_body() -> <WeatherServer as Service>::Future {
         let body = "Provide location as query";
@@ -47,6 +53,7 @@ impl Service for WeatherServer {
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
+
         let query = match req.query() {
             Some(s) => s,
             None => ""
@@ -58,9 +65,9 @@ impl Service for WeatherServer {
                     return Self::empty_query_body();
                 }
 
-                let async_apixu = apixu::current(&self.handle, query.to_string());
-                let async_owm = owm::current(&self.handle, query.to_string());
-                let async_wb = weatherbit::current(&self.handle, query.to_string());
+                let async_apixu = apixu::current(&self.handle, query, &self.apixu_key);
+                let async_owm = owm::current(&self.handle, query, &self.owm_key);
+                let async_wb = weatherbit::current(&self.handle, query, &self.weatherbit_key);
 
                 let resp = futures::future::join_all(vec![async_owm, async_apixu, async_wb]).map(|temps| {
                     let values: Vec<f32> = temps.into_iter().filter_map(|v| v).collect();
@@ -88,8 +95,8 @@ impl Service for WeatherServer {
                     return Self::empty_query_body();
                 }
 
-                let async_apixu = apixu::forecast(&self.handle, query.to_string());
-                let async_wb = weatherbit::forecast(&self.handle, query.to_string());
+                let async_apixu = apixu::forecast(&self.handle, query, &self.apixu_key);
+                let async_wb = weatherbit::forecast(&self.handle, query, &self.weatherbit_key);
 
                 let body = async_apixu.join(async_wb).map(|(apixu_temp, wb_temp)| {
                     let avg_temps: Vec<Option<f32>> = apixu_temp.iter().zip(wb_temp.iter()).map(|(&a, &b)| match (a, b) {
@@ -118,13 +125,32 @@ impl Service for WeatherServer {
 }
 
 fn main() {
-    let addr = "127.0.0.1:1337".parse().unwrap();
+    let addr = "0.0.0.0:1337".parse().unwrap();
 
     let mut core = tokio_core::reactor::Core::new().unwrap();
     let handle = core.handle();
     let client_handle = core.handle();
+    let weatherbit_key = match var("WEATHERBIT_KEY") {
+        Ok(v) => v,
+        Err(e) => panic!("WEATHERBIT_KEY is absent, {:?}", e),
+    };
 
-    let serve = Http::new().serve_addr_handle(&addr, &handle, move || Ok(WeatherServer{handle: client_handle.clone()})).unwrap();
+    let apixu_key = match var("APIXU_KEY") {
+        Ok(v) => v,
+        Err(e) => panic!("APIXU_KEY is absent, {:?}", e),
+    };
+    let owm_key = match var("OWM_KEY") {
+        Ok(v) => v,
+        Err(e) => panic!("OWM_KEY is absent, {:?}", e),
+    };
+
+
+    let serve = Http::new().serve_addr_handle(&addr, &handle, move || Ok(WeatherServer{
+        handle: client_handle.clone(),
+        owm_key: owm_key.clone(),
+        apixu_key: apixu_key.clone(),
+        weatherbit_key: weatherbit_key.clone(),
+    })).unwrap();
     println!("Listening on http://{} with 1 thread.", serve.incoming_ref().local_addr());
 
     let h2 = handle.clone();
