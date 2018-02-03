@@ -20,6 +20,17 @@ mod weatherbit;
 struct WeatherServer{
     handle: Handle
 }
+impl WeatherServer {
+    fn empty_query_body() -> <WeatherServer as Service>::Future {
+        let body = "Provide location as query";
+        let resp = Response::new()
+                    .with_status(StatusCode::UnprocessableEntity)
+                    .with_header(ContentLength(body.len() as u64))
+                    .with_header(ContentType::plaintext())
+                    .with_body(body);
+        Box::new(futures::future::ok(resp))
+    }
+}
 
 impl Service for WeatherServer {
     type Request = Request;
@@ -28,62 +39,66 @@ impl Service for WeatherServer {
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
+        let query = match req.query() {
+            Some(s) => s,
+            None => ""
+        };
+
         match (req.method(), req.path()) {
             (&Get, "/current") => {
-                match req.query() {
-                    Some(query) if query.len() > 0 => {
-                        let async_apixu = apixu::current(&self.handle, query.to_string());
-                        let async_owm = owm::current(&self.handle, query.to_string());
-                        let async_wb = weatherbit::current(&self.handle, query.to_string());
-
-                        let resp = futures::future::join_all(vec![async_owm, async_apixu, async_wb]).map(|temps| {
-                            let values: Vec<f32> = temps.into_iter().filter_map(|v| v).collect();
-                            let sum: f32 = values.iter().sum::<f32>();
-                            let avg = sum / values.len() as f32;
-
-                            let body = format!("avg: {:?}°C\n", avg);
-
-                            Response::new()
-                                    .with_header(ContentLength(body.len() as u64))
-                                    .with_header(ContentType::plaintext())
-                                    .with_body(body)
-                        });
-
-                        Box::new(resp)
-                    }
-                    _ => {
-                        let body = "Provide location as query";
-                        let resp = Response::new()
-                                    .with_status(StatusCode::UnprocessableEntity)
-                                    .with_header(ContentLength(body.len() as u64))
-                                    .with_header(ContentType::plaintext())
-                                    .with_body(body);
-                        Box::new(futures::future::ok(resp))
-                    }
+                if query.len() == 0 {
+                    return Self::empty_query_body();
                 }
+
+                let async_apixu = apixu::current(&self.handle, query.to_string());
+                let async_owm = owm::current(&self.handle, query.to_string());
+                let async_wb = weatherbit::current(&self.handle, query.to_string());
+
+                let resp = futures::future::join_all(vec![async_owm, async_apixu, async_wb]).map(|temps| {
+                    let values: Vec<f32> = temps.into_iter().filter_map(|v| v).collect();
+
+                    let sum: f32 = values.iter().sum::<f32>();
+                    let avg = sum / values.len() as f32;
+
+                    let body = if values.len() > 0 {
+                        format!("avg: {}°C\n", avg)
+                    } else {
+                        format!("Failed to receive APIs responses")
+                    };
+
+                    Response::new()
+                            .with_header(ContentLength(body.len() as u64))
+                            .with_header(ContentType::plaintext())
+                            .with_body(body)
+                });
+
+                Box::new(resp)
+
             },
             (&Get, "/forecast") => {
-                match req.query() {
-                    None => {
-                        let mut resp = Response::new();
-                        resp.set_status(StatusCode::UnprocessableEntity);
-                        Box::new(futures::future::ok(resp))
-                    }
-                    Some(query) => {
-                        let async_apixu = apixu::forecast(&self.handle, query.to_string());
-                        let async_wb = weatherbit::forecast(&self.handle, query.to_string());
-
-                        let body = async_apixu.join(async_wb).map(|(apixu_temp, wb_temp)| {
-                            let r = format!("apixu: {:?}°C\nwb: {:?}°C\n", apixu_temp, wb_temp);
-                            Response::new()
-                                    .with_header(ContentLength(r.len() as u64))
-                                    .with_header(ContentType::plaintext())
-                                    .with_body(r)
-                        });
-
-                        Box::new(body)
-                    }
+                if query.len() == 0 {
+                    return Self::empty_query_body();
                 }
+
+                let async_apixu = apixu::forecast(&self.handle, query.to_string());
+                let async_wb = weatherbit::forecast(&self.handle, query.to_string());
+
+                let body = async_apixu.join(async_wb).map(|(apixu_temp, wb_temp)| {
+                    let avg_temps: Vec<Option<f32>> = apixu_temp.iter().zip(wb_temp.iter()).map(|(&a, &b)| match (a, b) {
+                        (Some(x), Some(y)) => Some((x+y) / 2.0),
+                        (Some(x), None) => Some(x),
+                        (None, Some(y)) => Some(y),
+                        _ => None
+                    }).collect();
+
+                    let r = format!("avg_temps: {:?}°C\n", avg_temps);
+                    Response::new()
+                            .with_header(ContentLength(r.len() as u64))
+                            .with_header(ContentType::plaintext())
+                            .with_body(r)
+                });
+
+                Box::new(body)
             },
             _ => {
                 let mut resp = Response::new();
@@ -92,10 +107,7 @@ impl Service for WeatherServer {
             }
         }
     }
-
 }
-
-
 
 fn main() {
     let addr = "127.0.0.1:1337".parse().unwrap();
