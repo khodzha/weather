@@ -13,7 +13,8 @@ use self::futures::{Future, Stream};
 use self::futures::future::Either;
 use self::tokio_core::reactor::{Timeout, Handle};
 
-static TIMEOUT: u64 = 10;
+#[cfg(not(test))]
+static TIMEOUT: u64 = 5;
 
 pub mod error;
 
@@ -75,6 +76,9 @@ extern crate mockito;
 
 #[cfg(test)]
 const URL: &'static str = mockito::SERVER_URL;
+
+#[cfg(test)]
+static TIMEOUT: u64 = 10;
 
 #[cfg(test)]
 mod tests {
