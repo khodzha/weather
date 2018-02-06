@@ -10,6 +10,8 @@ use tokio_core::reactor::Handle;
 use hyper::header::{ContentLength, ContentType};
 use hyper::server::{Http, Service, Request, Response};
 
+use async_request::error::ApiError;
+
 pub type ResponseStream = Box<Stream<Item = String, Error=Error>>;
 
 pub mod async_request;
@@ -18,7 +20,7 @@ mod apixu;
 mod weatherbit;
 
 pub fn start_server(address: &str, keys: ApiKeys) -> tokio_core::reactor::Core {
-let addr = address.parse().unwrap();
+    let addr = address.parse().unwrap();
 
     let core = tokio_core::reactor::Core::new().unwrap();
     let handle = core.handle();
@@ -40,7 +42,7 @@ let addr = address.parse().unwrap();
 }
 
 
-pub struct WeatherServer{
+pub struct WeatherServer {
     handle: Handle,
     keys: ApiKeys
 }
@@ -102,7 +104,28 @@ impl Service for WeatherServer {
             None => ""
         };
 
+        let mut status = StatusCode::Ok;
+
         match (req.method(), req.path()) {
+            (&Get, "/") => {
+                let body = "<html> \
+                    <body> \
+                    examples:<br/> \
+                    <a href='/current?tomsk'>current weather in tomsk</a><br/> \
+                    <a href='/forecast?perm'>5 days forecast for perm</a> \
+                    </body> \
+                    </html> \
+                ";
+                let resp = futures::future::ok(
+                                Response::new()
+                                    .with_header(ContentLength(body.len() as u64))
+                                    .with_header(ContentType::html())
+                                    .with_status(StatusCode::Ok)
+                                    .with_body(body)
+                            );
+
+                Box::new(resp)
+            },
             (&Get, "/current") => {
                 if query.len() == 0 {
                     return Self::empty_query_body();
@@ -112,21 +135,33 @@ impl Service for WeatherServer {
                 let async_owm = owm::current(&self.handle, query, &self.keys.owm_key);
                 let async_wb = weatherbit::current(&self.handle, query, &self.keys.weatherbit_key);
 
-                let resp = futures::future::join_all(vec![async_owm, async_apixu, async_wb]).map(|temps| {
-                    let values: Vec<f32> = temps.into_iter().filter_map(|v| v).collect();
-
-                    let sum: f32 = values.iter().sum::<f32>();
-                    let avg = sum / values.len() as f32;
-
-                    let body = if values.len() > 0 {
-                        format!("avg: {:.1}°C\n", avg)
+                let resp = futures::future::join_all(vec![async_owm, async_apixu, async_wb]).map(move |temps| {
+                    let body = if temps.iter().all(|v| v.is_err()) {
+                        if temps.into_iter().all(|v| v == Err(ApiError::LocationNotFound)) {
+                            status = StatusCode::NotFound;
+                            format!("Location not found")
+                        } else {
+                            status = StatusCode::InternalServerError;
+                            format!("Something went wrong")
+                        }
                     } else {
-                        format!("Failed to receive APIs responses")
+                        let values: Vec<f32> = temps.into_iter().filter_map(|v| v.ok()).collect();
+
+                        let sum: f32 = values.iter().sum::<f32>();
+                        let avg = sum / values.len() as f32;
+
+                        if values.len() > 0 {
+                            format!("avg: {:.1}°C\n", avg)
+                        } else {
+                            format!("Failed to receive APIs responses")
+                        }
                     };
+
 
                     Response::new()
                             .with_header(ContentLength(body.len() as u64))
                             .with_header(ContentType::plaintext())
+                            .with_status(status)
                             .with_body(body)
                 });
 
@@ -141,22 +176,38 @@ impl Service for WeatherServer {
                 let async_apixu = apixu::forecast(&self.handle, query, &self.keys.apixu_key);
                 let async_wb = weatherbit::forecast(&self.handle, query, &self.keys.weatherbit_key);
 
-                let body = async_apixu.join(async_wb).map(|(apixu_temp, wb_temp)| {
-                    let avg_temps: Vec<Option<f32>> = apixu_temp.iter().zip(wb_temp.iter()).map(|(&a, &b)| match (a, b) {
-                        (Some(x), Some(y)) => Some((x+y) / 2.0),
-                        (Some(x), None) => Some(x),
-                        (None, Some(y)) => Some(y),
-                        _ => None
-                    }).collect();
+                let resp = async_apixu.join(async_wb).map(move |(apixu_temp, wb_temp)| {
+                    let body = if apixu_temp.is_err() && wb_temp.is_err() {
+                        if apixu_temp == Err(ApiError::LocationNotFound) && wb_temp == Err(ApiError::LocationNotFound) {
+                            status = StatusCode::NotFound;
+                            format!("Location not found")
+                        } else {
+                            status = StatusCode::InternalServerError;
+                            format!("Something went wrong")
+                        }
+                    } else {
+                        let apixu_temp_vec = apixu_temp.unwrap_or(vec![None; 5]);
+                        let wb_temp_vec = wb_temp.unwrap_or(vec![None; 5]);
 
-                    let r = Self::format_temps(avg_temps);
+                        let avg_temps: Vec<Option<f32>> = apixu_temp_vec.iter().zip(wb_temp_vec.iter()).map(|(&a, &b)| match (a, b) {
+                            (Some(x), Some(y)) => Some((x+y) / 2.0),
+                            (Some(x), None) => Some(x),
+                            (None, Some(y)) => Some(y),
+                            _ => None
+                        }).collect();
+
+                        Self::format_temps(avg_temps)
+                    };
+
+
                     Response::new()
-                            .with_header(ContentLength(r.len() as u64))
+                            .with_header(ContentLength(body.len() as u64))
                             .with_header(ContentType::plaintext())
-                            .with_body(r)
+                            .with_status(status)
+                            .with_body(body)
                 });
 
-                Box::new(body)
+                Box::new(resp)
             },
             _ => {
                 let mut resp = Response::new();

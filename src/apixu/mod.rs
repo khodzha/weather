@@ -6,12 +6,15 @@ extern crate tokio_core;
 extern crate serde_json;
 extern crate itertools;
 
-use self::serde_json::Value;
 use std::io;
+use self::serde_json::Value;
 use self::futures::{Future};
 
 use self::tokio_core::reactor::{Handle};
+
 use async_request::async_json_request;
+use async_request::Result;
+use async_request::error::ApiError;
 
 use self::itertools::EitherOrBoth::{Both};
 use self::itertools::Itertools;
@@ -19,30 +22,48 @@ use self::itertools::Itertools;
 #[cfg(not(test))]
 const API_ROOT: &'static str = "http://api.apixu.com/v1";
 
-pub fn current(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Option<f32>, Error = hyper::Error>> {
+pub fn current(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Result<f32>, Error = hyper::Error>> {
     let url = format!("{api_root}/current.json?key={key}&q={loc}", loc=q, key=api_key, api_root=API_ROOT);
 
     let resp = async_json_request(handle, &url).and_then(|s| {
-        let json_temp: Value = s["current"]["temp_c"].clone();
+        if s.status == hyper::StatusCode::BadRequest {
+            return Ok(Err(ApiError::LocationNotFound));
+        }
+
+        if s.body.is_none() {
+            return Ok(Err(ApiError::Other));
+        }
+
+        let body = s.body.unwrap();
+        let json_temp: Value = body["current"]["temp_c"].clone();
         let temp = serde_json::from_value::<f32>(json_temp).map_err(|e|
             io::Error::new(
                 io::ErrorKind::Other,
                 e
             )
         )?;
-        Ok(Some(temp))
+        Ok(Ok(temp))
     }).or_else(|_s|
-        Ok(None)
+        Ok(Err(ApiError::Other))
     );
 
     Box::new(resp)
 }
 
-pub fn forecast(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Vec<Option<f32>>, Error = hyper::Error>> {
+pub fn forecast(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Result<Vec<Option<f32>>>, Error = hyper::Error>> {
     let url = format!("{api_root}/forecast.json?key={key}&q={loc}&days=5", loc=q, key=api_key, api_root=API_ROOT);
 
     let resp = async_json_request(handle, &url).and_then(|s| {
-        let fcast: Value = s["forecast"]["forecastday"].clone();
+        if s.status == hyper::StatusCode::BadRequest {
+            return Ok(Err(ApiError::LocationNotFound));
+        }
+
+        if s.body.is_none() {
+            return Ok(Err(ApiError::Other));
+        }
+
+        let body = s.body.unwrap();
+        let fcast: Value = body["forecast"]["forecastday"].clone();
         let json_temps: Vec<Value> = serde_json::from_value(fcast).map_err(|e|
             io::Error::new(
                 io::ErrorKind::Other,
@@ -56,9 +77,9 @@ pub fn forecast(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Ve
             _ => None
         }).collect();
 
-        Ok(temps)
+        Ok(Ok(temps))
     }).or_else(|_s|
-        Ok(vec![None; 5])
+        Ok(Err(ApiError::Other))
     );
 
     Box::new(resp)
@@ -88,7 +109,7 @@ mod tests {
         let work = current(&handle, "Tomsk", "");
         let r = core.run(work);
 
-        assert_eq!(r.unwrap(), Some(-14.0));
+        assert_eq!(r.unwrap(), Ok(-14.0));
         m1.assert();
     }
 
@@ -105,7 +126,7 @@ mod tests {
         let work = current(&handle, "new-ork", "");
         let r = core.run(work);
 
-        assert_eq!(r.unwrap(), None);
+        assert_eq!(r.unwrap(), Err(ApiError::LocationNotFound));
         m2.assert();
     }
 
@@ -122,7 +143,7 @@ mod tests {
         let work = forecast(&handle, "Perm", "");
         let r = core.run(work);
 
-        assert_eq!(r.unwrap(), vec![Some(-9.8), Some(-6.8), Some(-4.2), Some(-5.8), Some(-7.6)]);
+        assert_eq!(r.unwrap(), Ok(vec![Some(-9.8), Some(-6.8), Some(-4.2), Some(-5.8), Some(-7.6)]));
         m3.assert();
     }
 
@@ -139,7 +160,7 @@ mod tests {
         let work = forecast(&handle, "new-ork", "");
         let r = core.run(work);
 
-        assert_eq!(r.unwrap(), vec![None; 5]);
+        assert_eq!(r.unwrap(), Err(ApiError::LocationNotFound));
         m4.assert();
     }
 
@@ -156,7 +177,7 @@ mod tests {
         let work = forecast(&handle, "Perm", "");
         let r = core.run(work);
 
-        assert_eq!(r.unwrap(), vec![Some(-9.8), Some(-6.8), Some(-4.2), None, None]);
+        assert_eq!(r.unwrap(), Ok(vec![Some(-9.8), Some(-6.8), Some(-4.2), None, None]));
         m.assert();
     }
 }

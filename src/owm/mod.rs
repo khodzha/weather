@@ -11,24 +11,36 @@ use self::futures::{Future};
 
 use self::tokio_core::reactor::{Handle};
 use async_request::async_json_request;
+use async_request::Result;
+use async_request::error::ApiError;
 
 #[cfg(not(test))]
 const API_ROOT: &'static str = "http://api.openweathermap.org/data/2.5";
 
-pub fn current(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Option<f32>, Error = hyper::Error>> {
+pub fn current(handle: &Handle, q: &str, api_key: &str) -> Box<Future<Item = Result<f32>, Error = hyper::Error>> {
     let url = format!("{api_root}/weather?q={loc}&APPID={key}&units=metric", loc=q, key=api_key, api_root=API_ROOT);
 
     let resp = async_json_request(handle, &url).and_then(|s| {
-        let json_temp: Value = s["main"]["temp"].clone();
+        if s.status == hyper::StatusCode::NotFound {
+            return Ok(Err(ApiError::LocationNotFound));
+        }
+
+        if s.body.is_none() {
+            return Ok(Err(ApiError::Other));
+        }
+
+        let body = s.body.unwrap();
+        let json_temp: Value = body["main"]["temp"].clone();
         let temp = serde_json::from_value::<f32>(json_temp).map_err(|e|
             io::Error::new(
                 io::ErrorKind::Other,
                 e
             )
         )?;
-        Ok(Some(temp))
+        Ok(Ok(temp))
+
     }).or_else(|_s|
-        Ok(None)
+        Ok(Err(ApiError::Other))
     );
 
     Box::new(resp)
@@ -58,7 +70,7 @@ mod tests {
         let work = current(&handle, "Yakutsk", "");
         let r = core.run(work);
 
-        assert_eq!(r.unwrap(), Some(-41.0));
+        assert_eq!(r.unwrap(), Ok(-41.0));
         m1.assert();
     }
 
@@ -74,7 +86,7 @@ mod tests {
         let work = current(&handle, "new-rk", "");
         let r = core.run(work);
 
-        assert_eq!(r.unwrap(), None);
+        assert_eq!(r.unwrap(), Err(ApiError::LocationNotFound));
         m2.assert();
     }
 }
