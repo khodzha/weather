@@ -4,3 +4,4 @@
 
 .env
 .dockerenv
+kubernetes/secrets/*.yaml

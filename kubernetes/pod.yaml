@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: weather-web-pod
+  labels:
+    app: weather-web
+spec:
+  containers:
+  - name: weather
+    image: gcr.io/weather-194421/weather:v1
+    ports:
+      - containerPort: 1337
+    env:
+      - name: OWM_KEY
+        valueFrom:
+          secretKeyRef:
+            name: owm-key
+            key: value
+      - name: APIXU_KEY
+        valueFrom:
+          secretKeyRef:
+            name: apixu-key
+            key: value
+      - name: WEATHERBIT_KEY
+        valueFrom:
+          secretKeyRef:
+            name: weatherbit-key
+            key: value
